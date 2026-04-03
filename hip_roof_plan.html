@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>모임지붕 기와강판 배치 평면도</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; background: #f0f2f5; padding: 24px; color: #333; }
+  h2 { margin: 0 0 4px 0; font-size: 20px; }
+  .subtitle { color: #666; font-size: 13px; margin-bottom: 20px; }
+  .wrap { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+  .legend { min-width: 230px; }
+  .legend h3 { margin: 0 0 10px 0; font-size: 14px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 12px; }
+  .legend-box { width: 28px; height: 16px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.25); flex-shrink: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 8px; }
+  th { background: #f5f5f5; padding: 5px 8px; text-align: center; border: 1px solid #ddd; font-size: 11px; }
+  td { padding: 4px 8px; border: 1px solid #eee; text-align: center; }
+  tr:last-child td { font-weight: bold; background: #fffbe6; }
+  .note { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<h2>🏠 모임지붕 기와강판 배치 평면도</h2>
+<p class="subtitle">가로 10m + 처마 0.5×2 = 11m &nbsp;|&nbsp; 세로 6m + 처마 0.5×2 = 7m &nbsp;|&nbsp; 경사 3.5치 &nbsp;|&nbsp; 경사길이 3.71m &nbsp;|&nbsp; 기와강판 유효폭 700mm</p>
+
+<div class="wrap">
+  <div class="card">
+    <svg id="planSvg"></svg>
+  </div>
+  <div class="card legend">
+    <h3>색상 범례 &amp; 주문 사이즈</h3>
+    <div id="legendBox"></div>
+    <h3 style="margin-top:16px">수량 집계표</h3>
+    <table id="countTable"></table>
+    <p class="note">
+      ※ 직선구간: 처마→용마루 전장 시공<br>
+      ※ 힙구간: 코너에서 위치별 길이 다름<br>
+      ※ 힙면(▲): 현장에서 힙각도로 절단<br>
+      ※ 2번장+1번장은 1.5m 1장에서 절단
+    </p>
+  </div>
+</div>
+
+<script>
+// ── 치수 설정 ──────────────────────────────
+const CFG = {
+  W: 11, D: 7,            // 처마포함 가로/세로 (m)
+  hipOff: 3.5,            // 힙 오프셋 (m) = 세로/2
+  ridgeLen: 4,            // 용마루 길이 (m) = W-D
+  sw: 0.7,                // 강판 유효폭 (m)
+  slopeLen: 3.71,         // 경사길이 (m)
+  scale: 60,              // px/m
+  mx: 75, my: 70          // margin
+};
+
+const S = CFG.scale;
+const W = CFG.W * S;      // 660
+const D = CFG.D * S;      // 420
+const HO = CFG.hipOff * S; // 210
+const SW = CFG.sw * S;     // 42
+const MX = CFG.mx, MY = CFG.my;
+
+// ── 구역 색상 ───────────────────────────────
+const ZONES = [
+  { id:'straight', label:'직선구간',  order:'주문 3.9m', len:3.71, fill:'#5ba4f5', stroke:'#1a5fb4' },
+  { id:'hip5',     label:'힙 5번장', order:'주문 3.5m', len:3.34, fill:'#57cc7a', stroke:'#287040' },
+  { id:'hip4',     label:'힙 4번장', order:'주문 2.7m', len:2.60, fill:'#b8e05a', stroke:'#6a8a10' },
+  { id:'hip3',     label:'힙 3번장', order:'주문 2.1m', len:1.86, fill:'#ffe45a', stroke:'#b09010' },
+  { id:'hip2',     label:'힙 2번장', order:'1.5m 절단', len:1.11, fill:'#ffaa44', stroke:'#c06010' },
+  { id:'hip1',     label:'힙 1번장', order:'1.5m 절단', len:0.37, fill:'#ff6e6e', stroke:'#c02020' },
+  { id:'hip_face', label:'힙면 ▲',   order:'현장절단',   len:null, fill:'#d0d8e8', stroke:'#7090b0' },
+];
+const ZM = Object.fromEntries(ZONES.map(z => [z.id, z]));
+
+// ── 구역 분류 ───────────────────────────────
+function getZoneId(xc) {
+  // xc: 0~W, fold right side
+  let x = xc > W/2 ? W - xc : xc;
+  if (x >= HO) return 'straight';
+  const r = x / HO;  // 0~1
+  if (r > 0.82) return 'hip5';
+  if (r > 0.61) return 'hip4';
+  if (r > 0.39) return 'hip3';
+  if (r > 0.18) return 'hip2';
+  return 'hip1';
+}
+
+function getLen(xc) {
+  let x = xc > W/2 ? W - xc : xc;
+  if (x >= HO) return CFG.slopeLen;
+  return parseFloat((x / HO * CFG.slopeLen).toFixed(2));
+}
+
+// hip rafter clip: 앞면에서 x위치의 y 클립값 (eave로부터)
+function clipY(xi) {
+  if (xi <= HO) return xi;
+  if (xi >= W - HO) return W - xi;
+  return HO;
+}
+
+// ── SVG 헬퍼 ────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('planSvg');
+const svgW = W + MX * 2 + 60;
+const svgH = D + MY * 2 + 30;
+svg.setAttribute('width', svgW);
+svg.setAttribute('height', svgH);
+
+function el(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k, v));
+  return e;
+}
+function rect(x,y,w,h,fill,stroke,sw=0.5,extra={}) {
+  return el('rect', {x,y,width:w,height:h,fill,stroke,'stroke-width':sw,...extra});
+}
+function poly(pts, fill, stroke, sw=1, op=1) {
+  return el('polygon', {points:pts.map(p=>p.join(',')).join(' '),fill,stroke,'stroke-width':sw,opacity:op});
+}
+function line(x1,y1,x2,y2,stroke='#666',sw=1,dash='') {
+  const e = el('line',{x1,y1,x2,y2,stroke,'stroke-width':sw});
+  if(dash) e.setAttribute('stroke-dasharray',dash);
+  return e;
+}
+function text(x,y,txt,size=11,color='#333',anchor='middle',weight='normal') {
+  const e = el('text',{x,y,'font-size':size,fill:color,'text-anchor':anchor,
+    'font-family':'Malgun Gothic,sans-serif','font-weight':weight});
+  e.textContent = txt;
+  return e;
+}
+function arrow(x1,y1,x2,y2,color='#666') {
+  svg.appendChild(line(x1,y1,x2,y2,color,1));
+  svg.appendChild(line(x1,y1,x1-4,y1+4,color,1));
+  svg.appendChild(line(x1,y1,x1+4,y1+4,color,1));
+  svg.appendChild(line(x2,y2,x2-4,y2-4,color,1));
+  svg.appendChild(line(x2,y2,x2+4,y2-4,color,1));
+}
+
+// ── 클립 패스 정의 ───────────────────────────
+const defs = el('defs',{});
+
+function addClip(id, pts) {
+  const cp = el('clipPath', {id});
+  cp.appendChild(el('polygon',{points:pts.map(p=>p.join(',')).join(' ')}));
+  defs.appendChild(cp);
+}
+
+addClip('clipFront', [
+  [MX,MY],[MX+W,MY],[MX+W-HO,MY+HO],[MX+HO,MY+HO]
+]);
+addClip('clipBack', [
+  [MX,MY+D],[MX+W,MY+D],[MX+W-HO,MY+HO],[MX+HO,MY+HO]
+]);
+svg.appendChild(defs);
+
+// ── 힙면 삼각형 (좌우) ───────────────────────
+svg.appendChild(poly([
+  [MX,MY],[MX,MY+D],[MX+HO,MY+HO]
+], ZM.hip_face.fill, ZM.hip_face.stroke, 1, 0.85));
+svg.appendChild(poly([
+  [MX+W,MY],[MX+W,MY+D],[MX+W-HO,MY+HO]
+], ZM.hip_face.fill, ZM.hip_face.stroke, 1, 0.85));
+
+// ── 강판 스트립 그리기 ─────────────────────────
+const counts = {};
+ZONES.forEach(z => counts[z.id] = 0);
+
+['front','back'].forEach(face => {
+  let x = 0;
+  while(x < W) {
+    const x2 = Math.min(x + SW, W);
+    const xc = (x + x2) / 2;
+    const zid = getZoneId(xc);
+    const z = ZM[zid];
+
+    // Full rectangle clipped to face
+    const r = rect(MX+x, face==='front'?MY:MY+HO,
+                   x2-x, HO, z.fill, z.stroke, 0.4,
+                   {'clip-path': face==='front'?'url(#clipFront)':'url(#clipBack)'});
+    svg.appendChild(r);
+
+    if(face==='front') counts[zid]++;
+    x += SW;
+  }
+});
+
+// ── 구분선 ──────────────────────────────────
+let x = SW;
+while(x <= W) {
+  const yTop = clipY(x);
+  // 앞면
+  svg.appendChild(line(MX+x, MY, MX+x, MY+yTop, '#555', 0.4));
+  // 뒷면
+  svg.appendChild(line(MX+x, MY+D, MX+x, MY+D-clipY(x), '#555', 0.4));
+  x += SW;
+}
+
+// ── 윤곽선 ──────────────────────────────────
+// 힙마루
+svg.appendChild(line(MX,MY, MX+HO,MY+HO, '#444',2));
+svg.appendChild(line(MX+W,MY, MX+W-HO,MY+HO, '#444',2));
+svg.appendChild(line(MX,MY+D, MX+HO,MY+HO, '#444',2));
+svg.appendChild(line(MX+W,MY+D, MX+W-HO,MY+HO, '#444',2));
+// 용마루
+svg.appendChild(line(MX+HO,MY+HO, MX+W-HO,MY+HO, '#cc2020',3));
+// 처마
+svg.appendChild(line(MX,MY, MX+W,MY, '#333',2));
+svg.appendChild(line(MX,MY+D, MX+W,MY+D, '#333',2));
+svg.appendChild(line(MX,MY, MX,MY+D, '#333',2));
+svg.appendChild(line(MX+W,MY, MX+W,MY+D, '#333',2));
+
+// ── 장별 길이 라벨 (앞면) ────────────────────
+x = 0;
+while(x < W) {
+  const x2 = Math.min(x + SW, W);
+  const xc = (x + x2) / 2;
+  const zid = getZoneId(xc);
+  const yTop = (clipY(x) + clipY(x2)) / 2;
+  const yMid = MY + yTop / 2;
+  const len = getLen(xc);
+
+  if(yTop > 18) {
+    // 길이 라벨
+    const t = text(MX+xc, yMid, `${len}`, 8, '#1a1a1a','middle','bold');
+    svg.appendChild(t);
+  }
+  x += SW;
+}
+
+// ── 치수 표기 ────────────────────────────────
+// 가로 치수 (위)
+svg.appendChild(line(MX,MY-30, MX+W,MY-30, '#888',1));
+svg.appendChild(line(MX,MY-35, MX,MY-25, '#888',1));
+svg.appendChild(line(MX+W,MY-35, MX+W,MY-25, '#888',1));
+svg.appendChild(text(MX+W/2, MY-35, '처마폭 11.0m (가로 10m + 처마 0.5×2)', 11,'#555'));
+
+// 용마루 치수
+svg.appendChild(line(MX+HO,MY+HO-15, MX+W-HO,MY+HO-15,'#cc2020',1,'4,3'));
+svg.appendChild(text(MX+W/2,MY+HO-18,'용마루 4.0m',10,'#cc2020','middle','bold'));
+
+// 세로 치수 (왼쪽)
+svg.appendChild(line(MX-30,MY, MX-30,MY+D,'#888',1));
+svg.appendChild(line(MX-35,MY, MX-25,MY,'#888',1));
+svg.appendChild(line(MX-35,MY+D, MX-25,MY+D,'#888',1));
+const dtx = text(MX-50, MY+D/2,'처마폭 7.0m (세로 6m + 처마 0.5×2)',10,'#555','middle');
+dtx.setAttribute('transform',`rotate(-90,${MX-50},${MY+D/2})`);
+svg.appendChild(dtx);
+
+// 경사길이 (앞면 중앙 점선)
+svg.appendChild(line(MX+W/2,MY, MX+W/2,MY+HO,'#999',1,'5,4'));
+svg.appendChild(text(MX+W/2+22,MY+HO/2,'경사길이 3.71m',9,'#999','start'));
+
+// 힙 오프셋 치수
+svg.appendChild(line(MX,MY+HO+10, MX+HO,MY+HO+10,'#888',0.8));
+svg.appendChild(text(MX+HO/2,MY+HO+22,'3.5m',9,'#888'));
+
+// 면 라벨
+svg.appendChild(text(MX+W/2, MY+HO/2+5,'앞면',13,'#1a3a6a','middle','bold'));
+svg.appendChild(text(MX+W/2, MY+D-HO/2+5,'뒷면',13,'#1a3a6a','middle','bold'));
+svg.appendChild(text(MX+HO/2, MY+D/2,'좌측\n힙면',10,'#5070a0','middle'));
+svg.appendChild(text(MX+W-HO/2, MY+D/2,'우측\n힙면',10,'#5070a0','middle'));
+svg.appendChild(text(MX+HO/2-12, MY+D/2+12,'▲',11,'#5070a0','middle'));
+svg.appendChild(text(MX+W-HO/2+12, MY+D/2+12,'▲',11,'#5070a0','middle'));
+
+// ── 범례 렌더링 ──────────────────────────────
+const legendBox = document.getElementById('legendBox');
+ZONES.forEach(z => {
+  const div = document.createElement('div');
+  div.className = 'legend-item';
+  div.innerHTML = `
+    <div class="legend-box" style="background:${z.fill};border-color:${z.stroke}"></div>
+    <div><b>${z.label}</b> &nbsp;<span style="color:#888">${z.order}</span>${z.len ? ` &nbsp;<span style="color:#aaa">(${z.len}m)</span>`  : ''}</div>
+  `;
+  legendBox.appendChild(div);
+});
+
+// ── 수량표 렌더링 ────────────────────────────
+// 앞뒤 각 face × 2
+const tableData = ZONES.filter(z => z.id !== 'hip_face').map(z => {
+  const perFace = counts[z.id];
+  const total = perFace * 2; // 앞+뒤
+  return { ...z, perFace, total };
+});
+
+// 힙면 추가
+const hipFaceRow = { id:'hip_face', label:'힙면 ▲', order:'현장절단', perFace:'좌우 각 1', total:'2면' };
+
+const table = document.getElementById('countTable');
+table.innerHTML = `
+  <tr><th>구분</th><th>주문길이</th><th>실길이(m)</th><th>앞·뒤각</th><th>합계</th></tr>
+  ${tableData.map(r=>`
+    <tr>
+      <td><span style="display:inline-block;width:12px;height:12px;background:${r.fill};border:1px solid ${r.stroke};border-radius:2px;margin-right:4px;vertical-align:middle"></span>${r.label}</td>
+      <td>${r.order}</td>
+      <td>${r.len}</td>
+      <td>${r.perFace}장</td>
+      <td><b>${r.total}장</b></td>
+    </tr>`).join('')}
+  <tr style="background:#e8f4ff">
+    <td colspan="2"><b>힙면 ▲</b></td>
+    <td>-</td>
+    <td colspan="2">좌·우 각 1면 (현장절단)</td>
+  </tr>
+  <tr>
+    <td colspan="3"><b>합 계</b></td>
+    <td colspan="2"><b>${tableData.reduce((s,r)=>s+r.total,0)}장 + 힙면</b></td>
+  </tr>
+`;
+</script>
+</body>
+</html>

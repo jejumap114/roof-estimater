@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>박공지붕 강판 배치 평면도</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family:'Malgun Gothic',sans-serif; background:#f0f2f5; padding:16px; color:#333; margin:0; }
+  h2  { margin:0 0 4px; font-size:18px; }
+  .sub{ color:#666; font-size:12px; margin-bottom:14px; }
+
+  .form-card { background:white; border-radius:10px; padding:14px 18px; box-shadow:0 2px 8px rgba(0,0,0,.1);
+               margin-bottom:14px; display:flex; flex-wrap:wrap; gap:10px 20px; align-items:flex-end; }
+  .form-group { display:flex; flex-direction:column; gap:3px; }
+  .form-group label { font-size:11px; color:#666; font-weight:bold; }
+  .form-group input, .form-group select {
+    border:1px solid #ccc; border-radius:6px; padding:5px 8px;
+    font-size:13px; font-family:inherit; width:90px; background:#fff; }
+  .form-group select { width:180px; }
+  .btn-calc { background:#1a5fb4; color:white; border:none; padding:8px 18px;
+              border-radius:7px; font-size:13px; cursor:pointer; font-family:inherit; font-weight:bold; }
+  .btn-calc:hover { background:#1347a0; }
+
+  .outer { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; }
+  .col-left  { display:flex; flex-direction:column; gap:14px; }
+  .col-right { display:flex; flex-direction:column; gap:14px; min-width:0; flex:0 0 300px; max-width:340px; }
+  .card { background:white; border-radius:10px; padding:14px 16px; box-shadow:0 2px 8px rgba(0,0,0,.1); }
+  .sec-title { font-size:12px; font-weight:bold; color:#1a3a6a; margin:0 0 10px;
+               padding-bottom:5px; border-bottom:2px solid #e8eef8; }
+
+  .tbl-wrap { overflow-x:auto; width:100%; }
+  table { border-collapse:collapse; width:100%; font-size:11px; margin-top:6px; }
+  th { background:#f0f4f8; padding:4px 5px; border:1px solid #ddd; text-align:center; font-size:10px; }
+  td { padding:3px 5px; border:1px solid #eee; text-align:center; font-size:11px; }
+  .tr-sub   td { font-weight:bold; background:#fffbe6; }
+  .tr-grand td { font-weight:bold; background:#e8f4ff; }
+  .note { font-size:11px; color:#888; margin-top:8px; line-height:1.7; }
+  .empty { color:#aaa; font-size:13px; text-align:center; padding:40px 0; }
+</style>
+</head>
+<body>
+<h2>📐 박공지붕 기와강판 배치 평면도</h2>
+<p class="sub" id="specLine">수치를 입력하고 [계산] 버튼을 누르세요.</p>
+
+<div class="form-card">
+  <div class="form-group">
+    <label>처마포함 가로 W (m)</label>
+    <input id="inp-W" type="number" step="0.01" placeholder="예) 11.0">
+  </div>
+  <div class="form-group">
+    <label>처마포함 세로 D (m)</label>
+    <input id="inp-D" type="number" step="0.01" placeholder="예) 7.0">
+  </div>
+  <div class="form-group">
+    <label>경사도 (치)</label>
+    <input id="inp-p" type="number" step="0.5" placeholder="예) 3.5">
+  </div>
+  <div class="form-group">
+    <label>강판 종류</label>
+    <select id="inp-ew">
+      <option value="700">기와강판 (유효폭 700mm)</option>
+      <option value="720">기와강판 (유효폭 720mm)</option>
+      <option value="600">징크강판 (유효폭 600mm)</option>
+      <option value="500">징크강판 (유효폭 500mm)</option>
+      <option value="400">강판 (유효폭 400mm)</option>
+    </select>
+  </div>
+  <button class="btn-calc" onclick="renderAll()">계산</button>
+</div>
+
+<div class="outer">
+  <div class="col-left">
+    <div class="card">
+      <p class="sec-title">① 지붕 평면도 (위에서 본 모습)</p>
+      <div id="planWrap"><p class="empty">수치를 입력해 주세요</p></div>
+    </div>
+    <div class="card">
+      <p class="sec-title">② 단면도 (옆에서 본 경사 프로파일)</p>
+      <div id="sectionWrap"><p class="empty">수치를 입력해 주세요</p></div>
+    </div>
+  </div>
+  <div class="col-right">
+    <div class="card">
+      <p class="sec-title">색상 범례</p>
+      <div id="legendWrap"></div>
+    </div>
+    <div class="card">
+      <p class="sec-title">수량표</p>
+      <div id="countTableWrap"><p class="empty" style="padding:20px 0">—</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <p class="sec-title">📦 발주표</p>
+  <div id="orderTableWrap"><p class="empty" style="padding:10px 0">—</p></div>
+  <p class="note">
+    ※ 강판 1장 = 유효폭 × 경사길이(빗면) &nbsp;|&nbsp;
+    ※ 주문사이즈 = 경사길이 + 여유 150mm, 50mm 단위 올림 &nbsp;|&nbsp;
+    ※ 앞면·뒷면 모두 동일 규격 &nbsp;|&nbsp;
+    ※ 박공(삼각형) 측면 가림판은 별도 계산
+  </p>
+</div>
+
+<script>
+// ── URL 파라미터 읽기 ──────────────────────────────
+const QS = new URLSearchParams(location.search);
+function qp(k){ return QS.get(k); }
+
+window.addEventListener('load', () => {
+  if(qp('w'))  document.getElementById('inp-W').value = parseFloat(qp('w')).toFixed(3);
+  if(qp('d'))  document.getElementById('inp-D').value = parseFloat(qp('d')).toFixed(3);
+  if(qp('p'))  document.getElementById('inp-p').value = qp('p');
+  if(qp('ew')){
+    const sel = document.getElementById('inp-ew');
+    for(let i=0;i<sel.options.length;i++)
+      if(sel.options[i].value===qp('ew')) sel.selectedIndex=i;
+  }
+  if(qp('w')&&qp('d')&&qp('p')) renderAll();
+});
+
+// ── SVG 헬퍼 ─────────────────────────────────────
+const NS='http://www.w3.org/2000/svg';
+function mk(tag,attrs){
+  const e=document.createElementNS(NS,tag);
+  Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));
+  return e;
+}
+function mRect(x,y,w,h,fill,stroke,sw=0.5){
+  return mk('rect',{x,y,width:w,height:h,fill,stroke,'stroke-width':sw});
+}
+function mLine(x1,y1,x2,y2,stroke='#666',sw=1,dash=''){
+  const e=mk('line',{x1,y1,x2,y2,stroke,'stroke-width':sw});
+  if(dash)e.setAttribute('stroke-dasharray',dash);
+  return e;
+}
+function mTxt(x,y,t,size=11,color='#333',anchor='middle',weight='normal'){
+  const e=mk('text',{x,y,'font-size':size,fill:color,'text-anchor':anchor,
+    'font-family':'Malgun Gothic,sans-serif','font-weight':weight});
+  e.textContent=t; return e;
+}
+function mPoly(pts,fill,stroke,sw=1){
+  return mk('polygon',{points:pts.map(p=>p.join(',')).join(' '),fill,stroke,'stroke-width':sw});
+}
+function dimLine(svg,x1,y1,x2,y2,label,color='#888',size=10){
+  svg.appendChild(mLine(x1,y1,x2,y2,color,1));
+  if(x1===x2){
+    svg.appendChild(mLine(x1-5,y1,x1+5,y1,color,1));
+    svg.appendChild(mLine(x1-5,y2,x1+5,y2,color,1));
+    const t=mTxt(x1-14,(y1+y2)/2,label,size,color,'middle');
+    t.setAttribute('transform',`rotate(-90,${x1-14},${(y1+y2)/2})`);
+    svg.appendChild(t);
+  } else {
+    svg.appendChild(mLine(x1,y1-5,x1,y1+5,color,1));
+    svg.appendChild(mLine(x2,y2-5,x2,y2+5,color,1));
+    svg.appendChild(mTxt((x1+x2)/2,y1-8,label,size,color,'middle'));
+  }
+}
+
+// 주문사이즈: 실길이 + 150mm, 50mm 단위 올림
+function getOrderSize(len){
+  return (Math.ceil((len+0.15)/0.05)*0.05).toFixed(2);
+}
+
+// ── 메인 렌더링 ───────────────────────────────────
+function renderAll(){
+  const W_m = parseFloat(document.getElementById('inp-W').value);
+  const D_m = parseFloat(document.getElementById('inp-D').value);
+  const p   = parseFloat(document.getElementById('inp-p').value);
+  const ewMM= parseFloat(document.getElementById('inp-ew').value);
+
+  if(isNaN(W_m)||isNaN(D_m)||isNaN(p)||W_m<=0||D_m<=0||p<=0){
+    alert('수치를 올바르게 입력해 주세요.'); return;
+  }
+
+  const ew_m     = ewMM / 1000;
+  const pfactor  = Math.sqrt(1 + Math.pow(p/10, 2));
+  const slopeLen = parseFloat(((D_m/2) * pfactor).toFixed(3));
+  const H_m      = parseFloat(((D_m/2) * (p/10)).toFixed(3));
+  const nStrips  = Math.ceil(parseFloat((W_m / ew_m).toFixed(6)));
+  const orderSz  = getOrderSize(slopeLen);
+  const total    = nStrips * 2;
+
+  document.getElementById('specLine').textContent =
+    `W=${W_m}m × D=${D_m}m | 경사 ${p}치 | 경사계수 ${pfactor.toFixed(4)} | 경사길이 ${slopeLen}m | 유효폭 ${ewMM}mm | 합계 ${total}장`;
+
+  drawPlan(W_m, D_m, ew_m, nStrips);
+  drawSection(D_m, p, slopeLen, H_m);
+  renderLegend(ewMM, slopeLen, orderSz, nStrips, total);
+}
+
+// ── ① 평면도 ─────────────────────────────────────
+function drawPlan(W_m, D_m, ew_m, nStrips){
+  const SC=50, MX=72, MY=58;
+  const W=W_m*SC, D=D_m*SC, SW=ew_m*SC;
+
+  const svgW=W+MX+70, svgH=D+MY+70;
+  const svg=mk('svg',{width:svgW, height:svgH});
+
+  const FILL_F='#5ba4f5', STR='#1a5fb4';
+  const FILL_B='#a8d4fa';
+
+  // 앞면·뒷면 스트립
+  for(let i=0;i<nStrips;i++){
+    const x1=i*SW, x2=Math.min((i+1)*SW, W), xc=(x1+x2)/2, w=x2-x1;
+    // 앞면 (처마→용마루)
+    svg.appendChild(mRect(MX+x1, MY, w, D/2, FILL_F, STR, 0.4));
+    // 뒷면 (용마루→처마)
+    svg.appendChild(mRect(MX+x1, MY+D/2, w, D/2, FILL_B, STR, 0.4));
+    // 번호 라벨 (앞면)
+    if(w > 12) svg.appendChild(mTxt(MX+xc, MY+D/4+4, `${i+1}`, w>22?8:6, '#1a3a6a','middle','bold'));
+  }
+
+  // 스트립 구분선
+  for(let i=1;i<nStrips;i++){
+    const x=i*SW;
+    svg.appendChild(mLine(MX+x, MY, MX+x, MY+D, '#1a5fb4', 0.4));
+  }
+
+  // 용마루 (가운데 빨간선)
+  svg.appendChild(mLine(MX, MY+D/2, MX+W, MY+D/2, '#cc2020', 2.5));
+  svg.appendChild(mTxt(MX+W+8, MY+D/2+4, '용마루', 9, '#cc2020','start','bold'));
+
+  // 처마선 (위·아래)
+  svg.appendChild(mLine(MX, MY, MX+W, MY, '#333', 2));
+  svg.appendChild(mLine(MX, MY+D, MX+W, MY+D, '#333', 2));
+  // 박공벽 (양쪽)
+  svg.appendChild(mLine(MX, MY, MX, MY+D, '#555', 2));
+  svg.appendChild(mLine(MX+W, MY, MX+W, MY+D, '#555', 2));
+
+  // 박공벽 사선 표시 (좌)
+  svg.appendChild(mLine(MX, MY, MX-10, MY+D/2, '#888', 1, '4,3'));
+  svg.appendChild(mLine(MX, MY+D, MX-10, MY+D/2, '#888', 1, '4,3'));
+  svg.appendChild(mTxt(MX-16, MY+D/2+4, '박공', 8, '#888','middle'));
+
+  // 박공벽 사선 표시 (우)
+  svg.appendChild(mLine(MX+W, MY, MX+W+10, MY+D/2, '#888', 1, '4,3'));
+  svg.appendChild(mLine(MX+W, MY+D, MX+W+10, MY+D/2, '#888', 1, '4,3'));
+  svg.appendChild(mTxt(MX+W+16, MY+D/2+4, '박공', 8, '#888','middle'));
+
+  // 면 라벨
+  svg.appendChild(mTxt(MX+W/2, MY+D/4+4, '앞면 (처마→용마루)', 12, '#fff','middle','bold'));
+  svg.appendChild(mTxt(MX+W/2, MY+D*3/4+4, '뒷면 (용마루→처마)', 12, '#1a3a6a','middle','bold'));
+
+  // 치수
+  dimLine(svg, MX, MY-32, MX+W, MY-32, `처마포함 가로 ${W_m}m`);
+  dimLine(svg, MX-40, MY, MX-40, MY+D, `처마포함 세로 ${D_m}m`);
+
+  // D/2 치수 (오른쪽)
+  svg.appendChild(mLine(MX+W+28, MY, MX+W+28, MY+D/2, '#aaa', 1));
+  svg.appendChild(mLine(MX+W+23, MY, MX+W+33, MY, '#aaa', 1));
+  svg.appendChild(mLine(MX+W+23, MY+D/2, MX+W+33, MY+D/2, '#aaa', 1));
+  const tD2=mTxt(MX+W+40, MY+D/4, `${(D_m/2).toFixed(2)}m`, 9, '#aaa', 'middle');
+  tD2.setAttribute('transform', `rotate(-90,${MX+W+40},${MY+D/4})`);
+  svg.appendChild(tD2);
+
+  // 첫 스트립 유효폭 표시
+  const sw1=Math.min(SW, W);
+  svg.appendChild(mLine(MX, MY+D+18, MX+sw1, MY+D+18, '#888', 0.8));
+  svg.appendChild(mLine(MX, MY+D+14, MX, MY+D+22, '#888', 1));
+  svg.appendChild(mLine(MX+sw1, MY+D+14, MX+sw1, MY+D+22, '#888', 1));
+  svg.appendChild(mTxt(MX+sw1/2, MY+D+32, `유효폭 ${(ew_m).toFixed(3)}m`, 8, '#888'));
+
+  const wrap=document.getElementById('planWrap');
+  wrap.innerHTML='';
+  wrap.appendChild(svg);
+}
+
+// ── ② 단면도 (경사 프로파일) ──────────────────────
+function drawSection(D_m, p, slopeLen, H_m){
+  const SC=55, MX=80, MY=50;
+  const halfD=D_m/2;
+  const Wpx=halfD*SC, Hpx=H_m*SC;
+
+  const svgW=MX+Wpx*2+70, svgH=MY+Hpx+100;
+  const svg=mk('svg',{width:svgW, height:svgH});
+
+  // 지붕 삼각형 (앞+뒤 단면)
+  const apex=[MX+Wpx, MY];           // 용마루
+  const eaveL=[MX, MY+Hpx];         // 처마(앞)
+  const eaveR=[MX+Wpx*2, MY+Hpx];   // 처마(뒤)
+  svg.appendChild(mPoly([eaveL, apex, eaveR], '#d0e8ff', '#1a5fb4', 1.5));
+
+  // 수평 기준선 (처마선)
+  svg.appendChild(mLine(MX-15, MY+Hpx, MX+Wpx*2+15, MY+Hpx, '#888', 0.8, '5,3'));
+
+  // 수직 높이 (마루높이)
+  svg.appendChild(mLine(MX+Wpx, MY, MX+Wpx, MY+Hpx, '#cc2020', 1, '4,2'));
+  svg.appendChild(mLine(MX+Wpx-5, MY, MX+Wpx+5, MY, '#cc2020', 1));
+  svg.appendChild(mLine(MX+Wpx-5, MY+Hpx, MX+Wpx+5, MY+Hpx, '#cc2020', 1));
+  svg.appendChild(mTxt(MX+Wpx+14, (MY+MY+Hpx)/2, `마루높이 H=${H_m}m`, 9, '#cc2020','start'));
+
+  // 경사길이 라벨 (좌측 사면, 중앙에)
+  const lMidX=(eaveL[0]+apex[0])/2+5, lMidY=(eaveL[1]+apex[1])/2;
+  const lAngle=Math.atan2(apex[1]-eaveL[1], apex[0]-eaveL[0])*180/Math.PI;
+  const lt=mTxt(lMidX, lMidY, `${slopeLen}m`, 10, '#1a3a6a','middle','bold');
+  lt.setAttribute('transform', `rotate(${lAngle},${lMidX},${lMidY})`);
+  svg.appendChild(lt);
+
+  // 경사길이 라벨 (우측 사면, 중앙에)
+  const rMidX=(eaveR[0]+apex[0])/2-5, rMidY=(eaveR[1]+apex[1])/2;
+  const rAngle=Math.atan2(apex[1]-eaveR[1], apex[0]-eaveR[0])*180/Math.PI;
+  const rt=mTxt(rMidX, rMidY, `${slopeLen}m`, 10, '#1a3a6a','middle','bold');
+  rt.setAttribute('transform', `rotate(${rAngle},${rMidX},${rMidY})`);
+  svg.appendChild(rt);
+
+  // 용마루 점
+  svg.appendChild(mk('circle',{cx:MX+Wpx, cy:MY, r:5, fill:'#cc2020', stroke:'white','stroke-width':1.5}));
+  svg.appendChild(mTxt(MX+Wpx, MY-10, '용마루', 9, '#cc2020','middle','bold'));
+
+  // 처마 라벨
+  svg.appendChild(mTxt(MX, MY+Hpx+14, '처마(앞)', 9, '#444','middle'));
+  svg.appendChild(mTxt(MX+Wpx*2, MY+Hpx+14, '처마(뒤)', 9, '#444','middle'));
+
+  // 수평 치수 (앞면)
+  dimLine(svg, MX, MY+Hpx+35, MX+Wpx, MY+Hpx+35, `${halfD.toFixed(2)}m (수평)`, '#888', 9);
+  // 수평 치수 (뒷면)
+  dimLine(svg, MX+Wpx, MY+Hpx+35, MX+Wpx*2, MY+Hpx+35, `${halfD.toFixed(2)}m (수평)`, '#888', 9);
+
+  // 경사도 표시
+  const angDeg=Math.atan(p/10)*180/Math.PI;
+  svg.appendChild(mTxt(MX+Wpx/4, MY+Hpx-8, `${p}치 (${angDeg.toFixed(1)}°)`, 9, '#5070a0','middle'));
+
+  const wrap=document.getElementById('sectionWrap');
+  wrap.innerHTML='';
+  wrap.appendChild(svg);
+}
+
+// ── 범례 + 수량표 ─────────────────────────────────
+function renderLegend(ewMM, slopeLen, orderSz, nStrips, total){
+  // 범례
+  document.getElementById('legendWrap').innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px">
+      <div style="width:24px;height:13px;background:#5ba4f5;border:1px solid #1a5fb4;border-radius:3px;flex-shrink:0"></div>
+      <div>앞면 (처마→용마루)</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px">
+      <div style="width:24px;height:13px;background:#a8d4fa;border:1px solid #1a5fb4;border-radius:3px;flex-shrink:0"></div>
+      <div>뒷면 (용마루→처마)</div>
+    </div>
+    <p class="note" style="margin-top:10px">
+      ※ 앞면·뒷면 동일 규격<br>
+      ※ 유효폭 ${ewMM}mm × 경사길이 ${slopeLen}m<br>
+      ※ 경사길이 기준 맞춤재단
+    </p>`;
+
+  // 수량표
+  document.getElementById('countTableWrap').innerHTML=`
+    <div class="tbl-wrap"><table>
+      <tr><th>면</th><th>실길이(m)</th><th>주문(m)</th><th>장수</th></tr>
+      <tr>
+        <td>앞면</td>
+        <td>${slopeLen}</td>
+        <td>${orderSz}</td>
+        <td><b>${nStrips}장</b></td>
+      </tr>
+      <tr>
+        <td>뒷면</td>
+        <td>${slopeLen}</td>
+        <td>${orderSz}</td>
+        <td><b>${nStrips}장</b></td>
+      </tr>
+      <tr class="tr-sub"><td colspan="3">합 계</td><td><b>${total}장</b></td></tr>
+    </table></div>
+    <p class="note" style="margin-top:8px">
+      ※ 앞뒤 각 ${nStrips}줄 × 2면 = <b>${total}장</b><br>
+      ※ 전 장수 동일 규격 (주문 ${orderSz}m)
+    </p>`;
+
+  // 발주표
+  document.getElementById('orderTableWrap').innerHTML=`
+    <table style="width:100%;max-width:500px">
+      <tr><th>주문사이즈</th><th>앞면</th><th>뒷면</th><th>합계</th></tr>
+      <tr>
+        <td><b>${orderSz}m</b></td>
+        <td>${nStrips}장</td>
+        <td>${nStrips}장</td>
+        <td><b>${total}장</b></td>
+      </tr>
+      <tr class="tr-grand"><td><b>합 계</b></td><td>${nStrips}장</td><td>${nStrips}장</td><td><b>${total}장</b></td></tr>
+    </table>`;
+}
+</script>
+</body>
+</html>

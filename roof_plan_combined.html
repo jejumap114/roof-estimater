@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>모임지붕 기와강판 배치 통합 평면도</title>
+<style>
+  body { font-family:'Malgun Gothic',sans-serif; background:#f0f2f5; padding:20px; color:#333; }
+  h2   { margin:0 0 4px 0; font-size:20px; }
+  .sub { color:#666; font-size:12px; margin-bottom:16px; }
+  .outer { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  .col-left  { display:flex; flex-direction:column; gap:14px; }
+  .col-right { display:flex; flex-direction:column; gap:14px; min-width:270px; }
+  .card { background:white; border-radius:10px; padding:16px; box-shadow:0 2px 8px rgba(0,0,0,.1); }
+  .sec-title { font-size:13px; font-weight:bold; color:#1a3a6a; margin:0 0 10px 0;
+               padding-bottom:6px; border-bottom:2px solid #e8eef8; }
+  .legend-item { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:12px; }
+  .legend-box  { width:26px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,.2); flex-shrink:0; }
+  table  { border-collapse:collapse; width:100%; font-size:11px; margin-top:6px; }
+  th { background:#f0f4f8; padding:4px 7px; border:1px solid #ddd; text-align:center; }
+  td { padding:3px 7px; border:1px solid #eee; text-align:center; }
+  .tr-total td { font-weight:bold; background:#fffbe6; }
+  .tr-grand td { font-weight:bold; background:#e8f4ff; }
+  .note { font-size:11px; color:#888; margin-top:8px; line-height:1.7; }
+</style>
+</head>
+<body>
+<h2>🏠 모임지붕 기와강판 배치 통합 평면도</h2>
+<p class="sub">
+  가로 10m + 처마 0.5×2 = 11m &nbsp;|&nbsp; 세로 6m + 처마 0.5×2 = 7m &nbsp;|&nbsp;
+  경사 3.5치 &nbsp;|&nbsp; 경사길이 3.71m &nbsp;|&nbsp; 기와강판 유효폭 700mm
+</p>
+
+<div class="outer">
+  <div class="col-left">
+    <!-- 1. 지붕 평면도 -->
+    <div class="card">
+      <p class="sec-title">① 지붕 평면도 (위에서 본 모습) — 앞면·뒷면·힙면 구역</p>
+      <svg id="planSvg"></svg>
+    </div>
+    <!-- 2. 힙면 상세도 -->
+    <div class="card">
+      <p class="sec-title">② 힙면 상세도 (좌측 기준 · 우측 동일 대칭)</p>
+      <svg id="hipSvg"></svg>
+    </div>
+  </div>
+
+  <div class="col-right">
+    <!-- 범례 -->
+    <div class="card">
+      <p class="sec-title">색상 범례</p>
+      <div id="legendBox"></div>
+    </div>
+    <!-- 앞·뒷면 집계 -->
+    <div class="card">
+      <p class="sec-title">앞면·뒷면 수량</p>
+      <table id="planTable"></table>
+    </div>
+    <!-- 힙면 집계 -->
+    <div class="card">
+      <p class="sec-title">힙면(▲) 수량 — 좌+우</p>
+      <table id="hipTable"></table>
+    </div>
+    <!-- 통합 발주표 -->
+    <div class="card">
+      <p class="sec-title">📦 통합 발주표</p>
+      <table id="orderTable"></table>
+      <p class="note">
+        ※ 직선구간: 처마→용마루 전장<br>
+        ※ 1·2번장: 1.5m 1장에서 절단 (2장 생산)<br>
+        ※ 힙면: 현장에서 힙각도(45°) 절단<br>
+        ※ 주문사이즈 = 실길이 + 여유 50mm
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══ 공통 상수 ════════════════════════════════
+const NS  = 'http://www.w3.org/2000/svg';
+const S   = 55;            // px/m (plan scale)
+const W   = 11 * S;        // 605
+const D   = 7  * S;        // 385
+const HO  = 3.5* S;        // 192.5
+const SW  = 0.7 * S;       // 38.5
+const SL  = 3.71;          // 경사길이 (m)
+const PF  = 1.060;         // 경사계수
+
+const ZONES = [
+  { id:'straight', label:'직선구간',  order:'주문 3.9m', len:3.71, fill:'#5ba4f5', stroke:'#1a5fb4' },
+  { id:'hip5',     label:'힙 5번장', order:'주문 3.5m', len:3.34, fill:'#57cc7a', stroke:'#287040' },
+  { id:'hip4',     label:'힙 4번장', order:'주문 2.7m', len:2.60, fill:'#b8e05a', stroke:'#6a8a10' },
+  { id:'hip3',     label:'힙 3번장', order:'주문 2.1m', len:1.86, fill:'#ffe45a', stroke:'#b09010' },
+  { id:'hip2',     label:'힙 2번장', order:'주문 1.5m', len:1.11, fill:'#ffaa44', stroke:'#c06010' },
+  { id:'hip1',     label:'힙 1번장', order:'주문 1.5m', len:0.37, fill:'#ff6e6e', stroke:'#c02020' },
+  { id:'hip_face', label:'힙면 ▲',   order:'현장절단',  len:null, fill:'#d0d8e8', stroke:'#7090b0' },
+];
+const ZM = Object.fromEntries(ZONES.map(z=>[z.id,z]));
+
+// ── SVG 헬퍼 ────────────────────────────────
+function mkEl(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));
+  return e;
+}
+function mkPoly(pts,fill,stroke,sw=1,op=1) {
+  return mkEl('polygon',{points:pts.map(p=>p.join(',')).join(' '),
+    fill,stroke,'stroke-width':sw,opacity:op});
+}
+function mkRect(x,y,w,h,fill,stroke,sw=0.5,extra={}) {
+  return mkEl('rect',{x,y,width:w,height:h,fill,stroke,'stroke-width':sw,...extra});
+}
+function mkLine(x1,y1,x2,y2,stroke='#666',sw=1,dash='') {
+  const e = mkEl('line',{x1,y1,x2,y2,stroke,'stroke-width':sw});
+  if(dash) e.setAttribute('stroke-dasharray',dash);
+  return e;
+}
+function mkTxt(x,y,t,size=11,color='#333',anchor='middle',weight='normal') {
+  const e = mkEl('text',{x,y,'font-size':size,fill:color,'text-anchor':anchor,
+    'font-family':'Malgun Gothic,sans-serif','font-weight':weight});
+  e.textContent=t; return e;
+}
+function mkDimLine(svg, x1,y1,x2,y2,label,color='#888',size=10) {
+  svg.appendChild(mkLine(x1,y1,x2,y2,color,1));
+  if(x1===x2){ // vertical
+    svg.appendChild(mkLine(x1-5,y1,x1+5,y1,color,1));
+    svg.appendChild(mkLine(x1-5,y2,x1+5,y2,color,1));
+    const t=mkTxt(x1-14,(y1+y2)/2,label,size,color,'middle');
+    t.setAttribute('transform',`rotate(-90,${x1-14},${(y1+y2)/2})`);
+    svg.appendChild(t);
+  } else { // horizontal
+    svg.appendChild(mkLine(x1,y1-5,x1,y1+5,color,1));
+    svg.appendChild(mkLine(x2,y2-5,x2,y2+5,color,1));
+    svg.appendChild(mkTxt((x1+x2)/2,y1-8,label,size,color,'middle'));
+  }
+}
+
+// ══ ① 지붕 평면도 ════════════════════════════
+(function drawPlan(){
+  const MX=70, MY=60;
+  const svg = document.getElementById('planSvg');
+  svg.setAttribute('width',  W+MX*2+30);
+  svg.setAttribute('height', D+MY*2+20);
+
+  function clipY(xi) {
+    if(xi<=HO) return xi;
+    if(xi>=W-HO) return W-xi;
+    return HO;
+  }
+  function getZoneId(xc) {
+    let x = xc>W/2 ? W-xc : xc;
+    if(x>=HO) return 'straight';
+    const r=x/HO;
+    if(r>0.82) return 'hip5';
+    if(r>0.61) return 'hip4';
+    if(r>0.39) return 'hip3';
+    if(r>0.18) return 'hip2';
+    return 'hip1';
+  }
+  function getLen(xc) {
+    let x=xc>W/2?W-xc:xc;
+    return x>=HO ? SL : parseFloat((x/HO*SL).toFixed(2));
+  }
+
+  // defs + clipPaths
+  const defs=mkEl('defs',{});
+  function addClip(id,pts){
+    const cp=mkEl('clipPath',{id});
+    cp.appendChild(mkEl('polygon',{points:pts.map(p=>p.join(',')).join(' ')}));
+    defs.appendChild(cp);
+  }
+  addClip('cpFront',[[MX,MY],[MX+W,MY],[MX+W-HO,MY+HO],[MX+HO,MY+HO]]);
+  addClip('cpBack', [[MX,MY+D],[MX+W,MY+D],[MX+W-HO,MY+HO],[MX+HO,MY+HO]]);
+  svg.appendChild(defs);
+
+  // 힙면 삼각형
+  svg.appendChild(mkPoly([[MX,MY],[MX,MY+D],[MX+HO,MY+HO]],
+    ZM.hip_face.fill,ZM.hip_face.stroke,1,0.85));
+  svg.appendChild(mkPoly([[MX+W,MY],[MX+W,MY+D],[MX+W-HO,MY+HO]],
+    ZM.hip_face.fill,ZM.hip_face.stroke,1,0.85));
+
+  // 강판 스트립
+  planCounts={};
+  ZONES.forEach(z=>planCounts[z.id]=0);
+  ['front','back'].forEach(face=>{
+    let x=0;
+    while(x<W){
+      const x2=Math.min(x+SW,W), xc=(x+x2)/2;
+      const zid=getZoneId(xc), z=ZM[zid];
+      const r=mkRect(MX+x, face==='front'?MY:MY+HO, x2-x, HO,
+        z.fill,z.stroke,0.4,
+        {'clip-path':`url(#cp${face==='front'?'Front':'Back'})`});
+      svg.appendChild(r);
+      if(face==='front') planCounts[zid]++;
+      x+=SW;
+    }
+  });
+
+  // 구분선
+  let x=SW;
+  while(x<=W){
+    const y=clipY(x);
+    svg.appendChild(mkLine(MX+x,MY,   MX+x,MY+y,   '#555',0.35));
+    svg.appendChild(mkLine(MX+x,MY+D, MX+x,MY+D-y, '#555',0.35));
+    x+=SW;
+  }
+
+  // 장별 길이 라벨 (앞면)
+  x=0;
+  while(x<W){
+    const x2=Math.min(x+SW,W), xc=(x+x2)/2;
+    const yAvg=(clipY(x)+clipY(x2))/2;
+    if(yAvg>16) svg.appendChild(mkTxt(MX+xc,MY+yAvg/2+3,`${getLen(xc)}`,7.5,'#111','middle','bold'));
+    x+=SW;
+  }
+
+  // 윤곽선
+  svg.appendChild(mkLine(MX,MY,MX+HO,MY+HO,'#444',2));
+  svg.appendChild(mkLine(MX+W,MY,MX+W-HO,MY+HO,'#444',2));
+  svg.appendChild(mkLine(MX,MY+D,MX+HO,MY+HO,'#444',2));
+  svg.appendChild(mkLine(MX+W,MY+D,MX+W-HO,MY+HO,'#444',2));
+  svg.appendChild(mkLine(MX+HO,MY+HO,MX+W-HO,MY+HO,'#cc2020',2.5)); // 용마루
+  svg.appendChild(mkLine(MX,MY,MX+W,MY,'#333',2));
+  svg.appendChild(mkLine(MX,MY+D,MX+W,MY+D,'#333',2));
+  svg.appendChild(mkLine(MX,MY,MX,MY+D,'#333',2));
+  svg.appendChild(mkLine(MX+W,MY,MX+W,MY+D,'#333',2));
+
+  // 치수
+  mkDimLine(svg, MX,MY-28,MX+W,MY-28,'처마폭 11.0m');
+  mkDimLine(svg, MX-38,MY,MX-38,MY+D,'처마폭 7.0m');
+  svg.appendChild(mkLine(MX+HO,MY+HO-12,MX+W-HO,MY+HO-12,'#cc2020',1,'4,3'));
+  svg.appendChild(mkTxt(MX+W/2,MY+HO-15,'용마루 4.0m',9,'#cc2020','middle','bold'));
+  svg.appendChild(mkLine(MX,MY+HO+10,MX+HO,MY+HO+10,'#aaa',0.8));
+  svg.appendChild(mkTxt(MX+HO/2,MY+HO+20,'3.5m',8,'#aaa'));
+
+  // 면 라벨
+  svg.appendChild(mkTxt(MX+W/2,MY+HO/2+4,'앞면',12,'#1a3a6a','middle','bold'));
+  svg.appendChild(mkTxt(MX+W/2,MY+D-HO/2+4,'뒷면',12,'#1a3a6a','middle','bold'));
+  svg.appendChild(mkTxt(MX+HO/2-5,MY+D/2-6,'좌측',9,'#5070a0','middle'));
+  svg.appendChild(mkTxt(MX+HO/2-5,MY+D/2+6,'힙면▲',9,'#5070a0','middle'));
+  svg.appendChild(mkTxt(MX+W-HO/2+5,MY+D/2-6,'우측',9,'#5070a0','middle'));
+  svg.appendChild(mkTxt(MX+W-HO/2+5,MY+D/2+6,'힙면▲',9,'#5070a0','middle'));
+})();
+
+// ══ ② 힙면 상세도 ════════════════════════════
+hipCounts={};
+(function drawHip(){
+  const SH=55, DH=7*SH, HOH=3.5*SH, SWH=0.7*SH, PFH=1.060;
+  const MXH=90, MYH=45;
+  const svg=document.getElementById('hipSvg');
+  svg.setAttribute('width',  MXH+HOH+110);
+  svg.setAttribute('height', MYH+DH+70);
+
+  ZONES.forEach(z=>hipCounts[z.id]=0);
+  const strips=[];
+
+  for(let i=0;i<10;i++){
+    const y1=i*SWH, y2=(i+1)*SWH, yc=(y1+y2)/2;
+    const xR1=Math.min(y1,DH-y1), xR2=Math.min(y2,DH-y2), xRc=Math.min(yc,DH-yc);
+    const slopeLen=parseFloat((xRc/SH*PFH).toFixed(2));
+    const zid=slopeLen<=0.50?'hip1':slopeLen<=1.30?'hip2':slopeLen<=2.10?'hip3':slopeLen<=2.90?'hip4':'hip5';
+    const z=ZM[zid];
+
+    const pts=[[MXH,MYH+y1],[MXH+xR1,MYH+y1],[MXH+xR2,MYH+y2],[MXH,MYH+y2]];
+    const upts=pts.filter((p,i,a)=>!a.slice(0,i).some(q=>q[0]===p[0]&&q[1]===p[1]));
+    svg.appendChild(mkPoly(upts,z.fill,z.stroke,0.8));
+    hipCounts[zid]++;
+    strips.push({i,yc,xRc,slopeLen,zid,cx:MXH+xRc/2,cy:MYH+yc});
+  }
+
+  // 구분선
+  for(let i=1;i<10;i++){
+    const y=MYH+i*SWH, xR=Math.min(i*SWH,DH-i*SWH);
+    svg.appendChild(mkLine(MXH,y,MXH+xR,y,'#555',0.35));
+  }
+  // 윤곽
+  svg.appendChild(mkLine(MXH,MYH,MXH+HOH,MYH+DH/2,'#444',2));
+  svg.appendChild(mkLine(MXH,MYH+DH,MXH+HOH,MYH+DH/2,'#444',2));
+  svg.appendChild(mkLine(MXH,MYH,MXH,MYH+DH,'#333',2));
+
+  // 라벨
+  strips.forEach(sd=>{
+    if(sd.xRc>16){
+      svg.appendChild(mkTxt(sd.cx,sd.cy-2,`${sd.slopeLen}m`,8,'#111','middle','bold'));
+      svg.appendChild(mkTxt(sd.cx,sd.cy+9,`(${sd.i<5?'위':'아래'}${sd.i%5+1}번)`,7,'#777','middle'));
+    }
+  });
+
+  // 치수
+  mkDimLine(svg, MXH-38,MYH,MXH-38,MYH+DH,'처마 7.0m');
+  svg.appendChild(mkLine(MXH,MYH+DH+22,MXH+HOH,MYH+DH+22,'#888',1));
+  svg.appendChild(mkLine(MXH,MYH+DH+17,MXH,MYH+DH+27,'#888',1));
+  svg.appendChild(mkLine(MXH+HOH,MYH+DH+17,MXH+HOH,MYH+DH+27,'#888',1));
+  svg.appendChild(mkTxt(MXH+HOH/2,MYH+DH+38,'힙 깊이 3.5m (경사길이 3.71m)',10,'#666'));
+
+  // 용마루 교점
+  svg.appendChild(mkEl('circle',{cx:MXH+HOH,cy:MYH+DH/2,r:5,fill:'#cc2020',stroke:'white','stroke-width':1.5}));
+  svg.appendChild(mkTxt(MXH+HOH+8,MYH+DH/2-6,'용마루 교점',9,'#cc2020','start','bold'));
+
+  // 장폭 안내
+  svg.appendChild(mkTxt(MXH+HOH+10,MYH+DH/2+20,'← 장폭 0.7m',9,'#888','start'));
+})();
+
+// ══ 범례 렌더링 ══════════════════════════════
+const legendBox=document.getElementById('legendBox');
+ZONES.forEach(z=>{
+  const d=document.createElement('div');
+  d.className='legend-item';
+  d.innerHTML=`<div class="legend-box" style="background:${z.fill};border-color:${z.stroke}"></div>
+    <div><b>${z.label}</b> &nbsp;<span style="color:#888">${z.order}</span>${z.len?` <span style="color:#bbb">(${z.len}m)</span>`:''}`;
+  legendBox.appendChild(d);
+});
+
+// ══ 앞·뒷면 수량표 ═══════════════════════════
+const planTable=document.getElementById('planTable');
+let pRows='', pTotal=0;
+ZONES.filter(z=>z.id!=='hip_face').forEach(z=>{
+  const perFace=planCounts[z.id], total=perFace*2;
+  pTotal+=total;
+  pRows+=`<tr>
+    <td><span style="display:inline-block;width:10px;height:10px;background:${z.fill};border:1px solid ${z.stroke};border-radius:2px;vertical-align:middle;margin-right:3px"></span>${z.label}</td>
+    <td>${z.len}m</td><td>${perFace}장×2</td><td><b>${total}장</b></td></tr>`;
+});
+planTable.innerHTML=`<tr><th>구분</th><th>실길이</th><th>앞·뒤각</th><th>합계</th></tr>
+  ${pRows}<tr class="tr-total"><td colspan="3">소 계</td><td><b>${pTotal}장</b></td></tr>`;
+
+// ══ 힙면 수량표 ══════════════════════════════
+const hipTable=document.getElementById('hipTable');
+let hRows='', hTotal=0;
+ZONES.filter(z=>z.id!=='hip_face'&&z.id!=='straight').forEach(z=>{
+  const per=hipCounts[z.id], total=per*2;
+  hTotal+=total;
+  hRows+=`<tr>
+    <td><span style="display:inline-block;width:10px;height:10px;background:${z.fill};border:1px solid ${z.stroke};border-radius:2px;vertical-align:middle;margin-right:3px"></span>${z.label}</td>
+    <td>${z.len}m</td><td>${per}장×2</td><td><b>${total}장</b></td></tr>`;
+});
+hipTable.innerHTML=`<tr><th>구분</th><th>실길이</th><th>좌·우각</th><th>합계</th></tr>
+  ${hRows}<tr class="tr-total"><td colspan="3">소 계</td><td><b>${hTotal}장</b></td></tr>`;
+
+// ══ 통합 발주표 ══════════════════════════════
+// 1.5m 1장으로 1번+2번 2장 생산 → 발주량 = max(hip1, hip2) per group
+const orderTable=document.getElementById('orderTable');
+const groups=[
+  { order:'주문 3.9m', ids:['straight'], note:'직선구간' },
+  { order:'주문 3.5m', ids:['hip5'],     note:'힙 5번장' },
+  { order:'주문 2.7m', ids:['hip4'],     note:'힙 4번장' },
+  { order:'주문 2.1m', ids:['hip3'],     note:'힙 3번장' },
+  { order:'주문 1.5m', ids:['hip2','hip1'], note:'2번+1번 절단' },
+];
+let oRows='', grandOrder=0, grandSheet=0;
+groups.forEach(g=>{
+  const planSh = g.ids.reduce((s,id)=>(planCounts[id]||0)*2+s,0);
+  const hipSh  = g.ids.reduce((s,id)=>(hipCounts[id]||0)*2+s,0);
+  const totalSh= planSh+hipSh;
+  // 1.5m orders: hip1 and hip2 come in pairs from one 1.5m sheet
+  let orderQty;
+  if(g.ids.includes('hip1')){
+    // 앞뒤: hip2=4, hip1=4 → 각 위치쌍 4개 → 1.5m 4장 발주 → 8장 생산
+    // 힙면: hip2=4, hip1=4 → 4장 발주 → 8장 생산
+    orderQty = (planCounts['hip2']||0)*2 + (hipCounts['hip2']||0)*2; // = 8장 발주
+  } else {
+    orderQty=totalSh;
+  }
+  grandOrder+=orderQty;
+  grandSheet+=totalSh;
+  const note=g.ids.includes('hip1')?`→ ${totalSh}장 생산`:'';
+  oRows+=`<tr>
+    <td><b>${g.order}</b></td>
+    <td style="color:#555;font-size:10px">${g.note}</td>
+    <td>${planSh}장</td><td>${hipSh}장</td>
+    <td><b>${orderQty}장</b> <span style="color:#aaa;font-size:10px">${note}</span></td></tr>`;
+});
+orderTable.innerHTML=`
+  <tr><th>주문사이즈</th><th>용도</th><th>앞·뒤</th><th>힙면</th><th>발주량</th></tr>
+  ${oRows}
+  <tr class="tr-grand">
+    <td colspan="2"><b>합 계</b></td>
+    <td colspan="2">시공 ${grandSheet}장</td>
+    <td><b>발주 ${grandOrder}장</b></td>
+  </tr>`;
+</script>
+</body>
+</html>
